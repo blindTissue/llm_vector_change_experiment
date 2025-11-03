@@ -514,6 +514,166 @@ def plot_topk_probability_spread(data_path, save_path=None):
 
     plt.close()
 
+def plot_cosine_vs_random_distribution(data_path, save_path=None):
+    """
+    Compare the distribution of actual cosine similarities vs random cosine similarities.
+    This helps determine if the observed similarities are meaningfully different from random chance.
+    """
+    data = np.load(data_path)
+
+    # Extract actual cosine similarities (all top-k values)
+    # Shape: [chunks, batch, timesteps, topk]
+    actual_cos = data['cos_values'].squeeze(1)  # [chunks, timesteps, topk]
+    random_cos = data['random_values'].squeeze(1)  # [chunks, timesteps, topk]
+
+    # Flatten all values
+    actual_flat = actual_cos.flatten()
+    random_flat = random_cos.flatten()
+
+    # Create figure with multiple subplots
+    fig = plt.figure(figsize=(16, 10))
+    gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+
+    # Subplot 1: Overlapping histograms
+    ax1 = fig.add_subplot(gs[0, :])
+    bins = np.linspace(min(actual_flat.min(), random_flat.min()),
+                       max(actual_flat.max(), random_flat.max()), 100)
+    ax1.hist(actual_flat, bins=bins, alpha=0.6, label='Actual Cosine Similarities',
+             color='tab:blue', density=True, edgecolor='black', linewidth=0.5)
+    ax1.hist(random_flat, bins=bins, alpha=0.6, label='Random Cosine Similarities',
+             color='tab:red', density=True, edgecolor='black', linewidth=0.5)
+    ax1.set_xlabel('Cosine Similarity', fontsize=11)
+    ax1.set_ylabel('Density', fontsize=11)
+    ax1.set_title('Distribution Comparison: Actual vs Random Cosine Similarities',
+                  fontsize=13, fontweight='bold')
+    ax1.legend(loc='best', fontsize=10)
+    ax1.grid(True, alpha=0.3)
+
+    # Subplot 2: Cumulative Distribution Functions (CDF)
+    ax2 = fig.add_subplot(gs[1, 0])
+    actual_sorted = np.sort(actual_flat)
+    random_sorted = np.sort(random_flat)
+    actual_cdf = np.arange(1, len(actual_sorted) + 1) / len(actual_sorted)
+    random_cdf = np.arange(1, len(random_sorted) + 1) / len(random_sorted)
+
+    ax2.plot(actual_sorted, actual_cdf, label='Actual', color='tab:blue', linewidth=2)
+    ax2.plot(random_sorted, random_cdf, label='Random', color='tab:red', linewidth=2)
+    ax2.set_xlabel('Cosine Similarity', fontsize=11)
+    ax2.set_ylabel('Cumulative Probability', fontsize=11)
+    ax2.set_title('Cumulative Distribution Function (CDF)', fontsize=12)
+    ax2.legend(loc='best')
+    ax2.grid(True, alpha=0.3)
+
+    # Subplot 3: Box plots
+    ax3 = fig.add_subplot(gs[1, 1])
+    box_data = [actual_flat, random_flat]
+    bp = ax3.boxplot(box_data, labels=['Actual', 'Random'], patch_artist=True,
+                     showfliers=False)  # Hide outliers for clarity
+    bp['boxes'][0].set_facecolor('tab:blue')
+    bp['boxes'][1].set_facecolor('tab:red')
+    for element in ['whiskers', 'fliers', 'means', 'medians', 'caps']:
+        plt.setp(bp[element], color='black', linewidth=1.5)
+    ax3.set_ylabel('Cosine Similarity', fontsize=11)
+    ax3.set_title('Distribution Summary (Box Plot)', fontsize=12)
+    ax3.grid(True, alpha=0.3, axis='y')
+
+    # Subplot 4: Mean cosine similarity over time
+    ax4 = fig.add_subplot(gs[2, 0])
+    mean_actual_over_time = np.mean(actual_cos[:, :, 0], axis=0)  # Best match over time
+    mean_random_over_time = np.mean(random_cos[:, :, 0], axis=0)
+    timestamps = np.arange(len(mean_actual_over_time))
+
+    ax4.plot(timestamps, mean_actual_over_time, label='Actual (Best Match)',
+             color='tab:blue', linewidth=2)
+    ax4.plot(timestamps, mean_random_over_time, label='Random (Best Match)',
+             color='tab:red', linewidth=2)
+    ax4.set_xlabel('Position/Timestep', fontsize=11)
+    ax4.set_ylabel('Mean Cosine Similarity', fontsize=11)
+    ax4.set_title('Mean Cosine Similarity Over Time', fontsize=12)
+    ax4.legend(loc='best')
+    ax4.grid(True, alpha=0.3)
+
+    # Subplot 5: Statistics text box
+    ax5 = fig.add_subplot(gs[2, 1])
+    ax5.axis('off')
+
+    # Calculate statistics
+    from scipy import stats
+
+    # Basic statistics
+    actual_mean = np.mean(actual_flat)
+    random_mean = np.mean(random_flat)
+    actual_std = np.std(actual_flat)
+    random_std = np.std(random_flat)
+    actual_median = np.median(actual_flat)
+    random_median = np.median(random_flat)
+
+    # Statistical tests
+    # T-test for difference in means
+    t_stat, t_pval = stats.ttest_ind(actual_flat, random_flat)
+
+    # Kolmogorov-Smirnov test for distribution difference
+    ks_stat, ks_pval = stats.ks_2samp(actual_flat, random_flat)
+
+    # Effect size (Cohen's d)
+    pooled_std = np.sqrt((actual_std**2 + random_std**2) / 2)
+    cohens_d = (actual_mean - random_mean) / pooled_std
+
+    stats_text = f"""Statistical Comparison:
+
+Actual Cosine Similarities:
+  Mean: {actual_mean:.4f}
+  Std: {actual_std:.4f}
+  Median: {actual_median:.4f}
+
+Random Cosine Similarities:
+  Mean: {random_mean:.4f}
+  Std: {random_std:.4f}
+  Median: {random_median:.4f}
+
+Difference:
+  Mean Δ: {actual_mean - random_mean:.4f}
+
+Statistical Tests:
+  T-test p-value: {t_pval:.2e}
+  KS-test p-value: {ks_pval:.2e}
+  Cohen's d: {cohens_d:.4f}
+
+Interpretation:
+  {"Significantly different" if ks_pval < 0.001 else "Not significantly different"}
+  Effect size: {"Large" if abs(cohens_d) > 0.8 else "Medium" if abs(cohens_d) > 0.5 else "Small"}
+"""
+
+    ax5.text(0.1, 0.5, stats_text, fontsize=10, family='monospace',
+             verticalalignment='center', bbox=dict(boxstyle='round',
+             facecolor='wheat', alpha=0.3))
+
+    # Save figure
+    script_dir = Path(__file__).parent
+    output_dir = script_dir / "output_graphs"
+    output_dir.mkdir(exist_ok=True)
+
+    if save_path is None:
+        data_path_obj = Path(data_path)
+        save_path = output_dir / f"{data_path_obj.parent.name}_cosine_vs_random.png"
+    else:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Cosine vs Random distribution graph saved to: {save_path}")
+
+    # Print statistics to console
+    print(f"\nCosine vs Random Analysis for {Path(data_path).parent.name}:")
+    print(f"  Actual mean: {actual_mean:.4f} ± {actual_std:.4f}")
+    print(f"  Random mean: {random_mean:.4f} ± {random_std:.4f}")
+    print(f"  Difference: {actual_mean - random_mean:.4f}")
+    print(f"  T-test p-value: {t_pval:.2e}")
+    print(f"  KS-test p-value: {ks_pval:.2e}")
+    print(f"  Cohen's d: {cohens_d:.4f}")
+
+    plt.close()
+
 def plot_multi_model_comparison(data_paths, model_names, metric='probability', save_path=None):
     """
     Compare the same metric across multiple models.
@@ -637,6 +797,13 @@ if __name__ == "__main__":
 
     plot_topk_probability_spread("final_output_vector_similarity/results/wikitext_results_Qwen_Qwen3-0.6B_20251103_142800/results.npz")
     plot_topk_probability_spread("final_output_vector_similarity/results/wikitext_results_Qwen_Qwen3-4B_20251103_144144/results.npz")
+
+    # Generate cosine vs random distribution comparison graphs
+    plot_cosine_vs_random_distribution("final_output_vector_similarity/results/wikitext_results_meta-llama_Llama-3.2-1B_20251103_144808/results.npz")
+    plot_cosine_vs_random_distribution("final_output_vector_similarity/results/wikitext_results_meta-llama_Llama-3.2-3B_20251103_150939/results.npz")
+
+    plot_cosine_vs_random_distribution("final_output_vector_similarity/results/wikitext_results_Qwen_Qwen3-0.6B_20251103_142800/results.npz")
+    plot_cosine_vs_random_distribution("final_output_vector_similarity/results/wikitext_results_Qwen_Qwen3-4B_20251103_144144/results.npz")
 
     # Generate multi-model comparison graphs
     data_paths = [
