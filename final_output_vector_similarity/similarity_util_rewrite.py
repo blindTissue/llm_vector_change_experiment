@@ -1,4 +1,3 @@
-from sympy.strategies.tools import top_down
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 import torch.nn.functional as F
@@ -11,17 +10,20 @@ class finalOutputAnalysis:
         self.model = AutoModelForCausalLM.from_pretrained(model_name, device_map=device)
         self.max_logit_indices = None
         self.max_logit_values = None
+        
+        self.max_probability_values = None
 
         self.max_cosine_indices = None
         self.max_cosine_values = None
+        self.max_random_cosine_values = None
 
         self.model_head_weights = self.model.lm_head.weight.data
         self.model_head_weights_normalized = self.model_head_weights / self.model_head_weights.norm(dim=-1, keepdim=True)
-        self.random_vectors = F.normalize(torch.randn(self.model_head_weights.shape[0], self.model_head_weights.shape[1]), dim=-1).to(device)
+        self.random_vectors = F.normalize(torch.randn(self.model_head_weights.shape[0], self.model_head_weights.shape[1]), dim=-1).to(self.model.device)
         self.intersection_count = 0
         
 
-    def pass_input(self, input_text: Union[str, torch.Tensor], topk: int =10) -> None:
+    def pass_input(self, input_text: Union[str, torch.Tensor], topk: int = 10) -> None:
         """
         Passing input through the model
         creates max logit indices, values, max cosine indices, values, and max random vector cosine similarities
@@ -51,6 +53,12 @@ class finalOutputAnalysis:
 
         ### largest logits and their indices
         self.max_logit_values, self.max_logit_indices = torch.topk(outputs.logits, k=topk, dim=-1)
+        
+        ### largest probabilities
+        probabilities = torch.softmax(outputs.logits, dim=-1)
+
+        self.max_probability_values, _ = torch.topk(probabilities, k=topk, dim=-1)
+        
 
         ### largest cosine similarity
         cosine_similarities = last_output_normalized @ self.model_head_weights_normalized.T
@@ -61,7 +69,7 @@ class finalOutputAnalysis:
 
         ### with random indices
         random_similarities = last_output_normalized @ self.random_vectors.T
-        max_random_cosine_values, _ = torch.topk(random_similarities, k=topk, dim=-1)
+        self.max_random_cosine_values, _ = torch.topk(random_similarities, k=topk, dim=-1)
 
         #print(max_random_cosine_values)
     
@@ -93,15 +101,16 @@ class finalOutputAnalysis:
 if __name__ == "__main__":
     model_name = "meta-llama/Llama-3.2-1B"
     device = "mps"
-    random_string = "What a wonderful world"
+    random_string = "Thomas likes tan dress shirt, royalblue cap, crimson windbreaker, chartreuse tank top, peru corduroy pants, forestgreen jeans, palevioletred denim jacket, deeppink belt, firebrick overcoat, tomato bomber jacket, orchid cardigan, olive raincoat, chocolate t-shirt, teal gloves, rosybrown polo, ivory swim trunks, midnightblue shorts, sienna chinos, hotpink cargo pants, and cadetblue waistcoat. The sienna"
     foa = finalOutputAnalysis(model_name, device)
     foa.pass_input(random_string)
     foa.find_intersect_numbers()
     print(foa.intersection_count)
-    print(foa.max_cosine_indices)
+    print(foa.max_logit_values)
 
     del foa
-    torch.mps.empty_cache()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
 
             
 

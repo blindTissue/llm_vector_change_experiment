@@ -97,9 +97,10 @@ def chunk_with_bos(tensor, chunk_size, tokenizer):
 if __name__ == "__main__":
     script_dir = Path(__file__).parent
     save_name = script_dir / "wikitext"
-    model_name = "Qwen/Qwen3-4B"
+    model_name = "meta-llama/Llama-3.2-3B"
     device = "mps"
-    torch.mps.empty_cache()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     if save_name.exists():
@@ -118,14 +119,19 @@ if __name__ == "__main__":
     cos_vals = []
     logit_inds = []
     logit_vals = []
+    random_vals = []
+    prob_vals = []
     intersection_counts = []
     for tensor in tqdm(chunked_items):
         foa.pass_input(tensor, topk=10)
         foa.find_intersect_numbers() 
         cos_inds.append(foa.max_cosine_indices.cpu())
         cos_vals.append(foa.max_cosine_values.cpu())
+        prob_vals.append(foa.max_probability_values.cpu())
         logit_inds.append(foa.max_logit_indices.cpu())
         logit_vals.append(foa.max_logit_values.cpu())  
+        random_vals.append(foa.max_random_cosine_values.cpu())
+        
         intersection_counts.append(foa.intersection_count)
     
     # Save results
@@ -148,6 +154,8 @@ if __name__ == "__main__":
     cos_vals_array = torch.stack(cos_vals).numpy()
     logit_inds_array = torch.stack(logit_inds).numpy()
     logit_vals_array = torch.stack(logit_vals).numpy()
+    random_vals_array = torch.stack(random_vals).numpy()
+    prob_vals_array = torch.stack(prob_vals).numpy()
     
     # Convert intersection_counts from list of lists to 2D array: [num_chunks, seq_len]
     intersection_counts_array = np.array(intersection_counts)
@@ -159,6 +167,8 @@ if __name__ == "__main__":
         cos_values=cos_vals_array,
         logit_indices=logit_inds_array,
         logit_values=logit_vals_array,
+        random_values = random_vals_array,
+        prob_values = prob_vals_array,
         intersection_counts=intersection_counts_array
     )
     
@@ -176,6 +186,8 @@ if __name__ == "__main__":
             "cos_values": list(cos_vals_array.shape),
             "logit_indices": list(logit_inds_array.shape),
             "logit_values": list(logit_vals_array.shape),
+            "random_values": list(random_vals_array.shape),
+            "prob_values": list(prob_vals_array.shape),
             "intersection_counts": list(intersection_counts_array.shape),
         }
     }
